@@ -19,6 +19,7 @@ from transformers import (
     AutoModelForCausalLM,
     BertForPreTraining,
     T5ForConditionalGeneration,
+    HubertModel,
 )
 
 import transformer_lens.utils as utils
@@ -1943,6 +1944,13 @@ def get_pretrained_state_dict(
             huggingface_token = os.environ.get("HF_TOKEN", "")
             if official_model_name in NON_HF_HOSTED_MODEL_NAMES:
                 raise NotImplementedError("Model not hosted on HuggingFace, must pass in hf_model")
+            elif "hubert" in official_model_name:
+                hf_model = HubertModel.from_pretrained(
+                    official_model_name,
+                    torch_dtype=dtype,
+                    token=huggingface_token if len(huggingface_token) > 0 else None,
+                    **kwargs,
+                )
             elif "bert" in official_model_name:
                 hf_model = BertForPreTraining.from_pretrained(
                     official_model_name,
