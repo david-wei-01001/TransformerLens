@@ -371,7 +371,7 @@ class HookedEncoder(HookedRootModule):
             official_model_name, cfg, hf_model, dtype=dtype, **from_pretrained_kwargs
         )
 
-        model = cls(cfg, move_to_device=False)
+        model = cls(cfg, move_to_device=False, model_name=official_model_name)
 
         model.load_state_dict(state_dict, strict=False)
 
