@@ -16,7 +16,7 @@ import torch.nn as nn
 import numpy as np
 from einops import repeat
 from jaxtyping import Float, Int
-from transformers import AutoProcessor, HubertModel
+from transformers import AutoProcessor, HubertModel, HubertForCTC
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 import transformer_lens.loading_from_pretrained as loading
@@ -25,11 +25,6 @@ from transformer_lens.components import (
     MLP,
     Attention,
     BertBlock,
-    BertEmbed,
-    BertMLMHead,
-    BertNSPHead,
-    BertPooler,
-    Unembed,
 )
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule, HookPoint
@@ -55,6 +50,7 @@ class HookedEncoder(HookedRootModule):
         cfg: Union[HookedTransformerConfig, Dict],
         move_to_device: bool = True,
         model_name: str = "facebook/hubert-base-ls960",
+        use_ctc: bool = True,
         **kwargs: Any,
     ):
         super().__init__()
@@ -70,14 +66,22 @@ class HookedEncoder(HookedRootModule):
 
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
         processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
-        model = HubertModel.from_pretrained(model_name)
+        if use_ctc:
+            hubert_model = HubertForCTC.from_pretrained(model_name)
+        else:
+            hubert_model = HubertModel.from_pretrained(model_name)
         if move_to_device:
             if self.cfg.device is None:
                 raise ValueError("Cannot move to device when device is None")
-            model.to(self.cfg.device)
-        model.eval()
+            hubert_.to(self.cfg.device)
+        hubert_.eval()
         self.processor = processor
-        self.model = model
+        if use_ctc:
+            self.hubert_model = hubert_model.hubert
+            self.lm_head = hubert_model.lm_head
+        else:
+            self.hubert_model = hubert_model
+            self.lm_head = None
 
         if move_to_device:
             if self.cfg.device is None:
@@ -141,7 +145,7 @@ class HookedEncoder(HookedRootModule):
     
         # 1) convolutional frontend -> (batch, conv_dim, conv_time)
         with torch.no_grad():
-            conv_feats = self.model.feature_extractor(input_values)  # (B, C, T_conv)
+            conv_feats = self.hubert_model.feature_extractor(input_values)  # (B, C, T_conv)
     
         # 2) transpose to (batch, T_conv, C)
         extract_features = conv_feats.transpose(1, 2)
@@ -151,14 +155,14 @@ class HookedEncoder(HookedRootModule):
         if sample_attention_mask is not None:
             # model should provide helper _get_feature_vector_attention_mask
             try:
-                frame_attention_mask = self.model._get_feature_vector_attention_mask(extract_features.shape[1], sample_attention_mask)
+                frame_attention_mask = self.hubert_model._get_feature_vector_attention_mask(extract_features.shape[1], sample_attention_mask)
             except AttributeError:
                 # fallback: compute output lengths and create mask similarly to HF implementation
                 # compute output lengths (downsampled lengths) from sample attention mask (sums per example)
                 input_lengths = sample_attention_mask.sum(dim=-1)  # (batch,)
                 # compute output lengths through conv layers using model._get_feat_extract_output_lengths if exists
                 if hasattr(model, "_get_feat_extract_output_lengths"):
-                    output_lengths = self.model._get_feat_extract_output_lengths(input_lengths).to(torch.long)
+                    output_lengths = self.hubert_model._get_feat_extract_output_lengths(input_lengths).to(torch.long)
                 else:
                     # fallback to naive downsample ratio: output_frames = extract_features.shape[1]
                     output_lengths = torch.full((sample_attention_mask.shape[0],), extract_features.shape[1], device=device, dtype=torch.long)
@@ -173,7 +177,7 @@ class HookedEncoder(HookedRootModule):
     
         # 4) feature projection -> (batch, frames, hidden_size)
         with torch.no_grad():
-            hidden_states = self.model.feature_projection(extract_features)  # typically returns (B, T, hidden)
+            hidden_states = self.hubert_model.feature_projection(extract_features)  # typically returns (B, T, hidden)
             # In HF's hubert, feature_projection is a module that returns a tensor (not tuple). If it returns tuple, adjust.
     
         # convert bool mask to long (1/0) if needed
@@ -193,9 +197,9 @@ class HookedEncoder(HookedRootModule):
             if one_zero_attention_mask is not None:
                 one_zero_attention_mask = one_zero_attention_mask.to(self.cfg.device)
     
-        position_embeddings = self.model.encoder.pos_conv_embed(frames)
+        position_embeddings = self.hubert_model.encoder.pos_conv_embed(frames)
         resid = resid + position_embeddings
-        resid = self.model.encoder.layer_norm(resid)
+        resid = self.hubert_model.encoder.layer_norm(resid)
     
         large_negative_number = -torch.inf
         mask = (
@@ -219,6 +223,7 @@ class HookedEncoder(HookedRootModule):
             Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
         ],
         sampling_rate: int = 16000,
+        use_proj: bool = False,
         move_to_device: bool = True,
     ) -> Optional[torch.Tensor]:
         """
@@ -230,6 +235,7 @@ class HookedEncoder(HookedRootModule):
                 - 3D torch.Tensor shaped (batch, frames, d_model) -> treated as precomputed frames (skip to_frames)
                 - tuple (frames, frame_mask) -> use directly
             sampling_rate: sampling rate for to_frames when converting raw audio.
+            use_proj: Whether to use the final head of HubertCTC
             move_to_device: move tensors to self.cfg.device (to match your other code).
     
         Returns:
@@ -264,6 +270,13 @@ class HookedEncoder(HookedRootModule):
     
         # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
         resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
+
+        if use_proj:
+            if self.lm_head is None:
+                logging.warning("HubertForCTC not enabled")
+                return resid
+            hidden_states = resid[0]  # (B, T, d_model)
+            resid = self.lm_head(hidden_states)  # (B, T, vocab_size)
 
         return resid
 
@@ -332,6 +345,7 @@ class HookedEncoder(HookedRootModule):
         device: Optional[str] = None,
         move_to_device: bool = True,
         dtype: torch.dtype = torch.float32,
+        use_ctc: bool = True,
         **from_pretrained_kwargs: Any,
     ) -> HookedEncoder:
         """Loads in the pretrained weights from huggingface. Currently supports loading weight from HuggingFace BertForMaskedLM. Unlike HookedTransformer, this does not yet do any preprocessing on the model."""
@@ -371,7 +385,7 @@ class HookedEncoder(HookedRootModule):
             official_model_name, cfg, hf_model, dtype=dtype, **from_pretrained_kwargs
         )
 
-        model = cls(cfg, move_to_device=False, model_name=official_model_name)
+        model = cls(cfg, move_to_device=False, model_name=official_model_name, use_ctc=use_ctc)
 
         model.load_state_dict(state_dict, strict=False)
 
