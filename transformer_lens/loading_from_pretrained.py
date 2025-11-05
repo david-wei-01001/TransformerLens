@@ -1181,6 +1181,23 @@ def convert_hf_model_config(model_name: str, **kwargs: Any):
         }
         rotary_pct = hf_config.rotary_pct
         cfg_dict["rotary_dim"] = round(rotary_pct * cfg_dict["d_head"])
+    elif any(x in architecture for x in (
+        "HubertModel", "HubertForCTC", "HubertForPreTraining", "HubertForSequenceClassification"
+    )) or "hubert" in official_model_name.lower():
+        # Basic transformer configuration
+        cfg_dict = {
+            "d_model": hf_config.hidden_size,
+            "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+            "n_heads": hf_config.num_attention_heads,
+            "d_mlp": hf_config.intermediate_size,
+            "n_layers": hf_config.num_hidden_layers,
+            # HuBERT operates on audio frames, not tokens — n_ctx is flexible
+            "n_ctx": getattr(hf_config, "max_position_embeddings", 8192),
+            "eps": hf_config.layer_norm_eps,
+            "act_fn": "gelu",
+            "attention_dir": "bidirectional",
+            "d_vocab": -1,  # no text vocabulary
+        }
     elif architecture == "BertForMaskedLM":
         # All supported Bert architectures have the same config,
         # so we can use the BertForMaskedLM config for all of them
