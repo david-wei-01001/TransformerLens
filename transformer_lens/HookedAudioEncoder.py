@@ -53,7 +53,6 @@ class HookedEncoder(HookedRootModule):
     def __init__(
         self,
         cfg: Union[HookedTransformerConfig, Dict],
-        tokenizer: Optional[Any] = None,
         move_to_device: bool = True,
         model_name: str = "facebook/hubert-base-ls960",
         **kwargs: Any,
@@ -68,25 +67,7 @@ class HookedEncoder(HookedRootModule):
         self.cfg = cfg
 
         assert self.cfg.n_devices == 1, "Multiple devices not supported for HookedEncoder"
-        if tokenizer is not None:
-            self.tokenizer = tokenizer
-        elif self.cfg.tokenizer_name is not None:
-            huggingface_token = os.environ.get("HF_TOKEN", "")
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.cfg.tokenizer_name,
-                token=huggingface_token if len(huggingface_token) > 0 else None,
-            )
-        else:
-            self.tokenizer = None
 
-        if self.cfg.d_vocab == -1:
-            # If we have a tokenizer, vocab size can be inferred from it.
-            assert self.tokenizer is not None, "Must provide a tokenizer if d_vocab is not provided"
-            self.cfg.d_vocab = max(self.tokenizer.vocab.values()) + 1
-        if self.cfg.d_vocab_out == -1:
-            self.cfg.d_vocab_out = self.cfg.d_vocab
-
-        self.embed = BertEmbed(self.cfg)
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
         processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
         model = HubertModel.from_pretrained(model_name)
@@ -97,8 +78,6 @@ class HookedEncoder(HookedRootModule):
         model.eval()
         self.processor = processor
         self.model = model
-
-        self.hook_full_embed = HookPoint()
 
         if move_to_device:
             if self.cfg.device is None:
@@ -214,8 +193,9 @@ class HookedEncoder(HookedRootModule):
             if one_zero_attention_mask is not None:
                 one_zero_attention_mask = one_zero_attention_mask.to(self.cfg.device)
     
-        # directly use frames as "embed output" (skip to_tokens/embed)
-        resid = self.hook_full_embed(frames)
+        position_embeddings = self.model.encoder.pos_conv_embed(frames)
+        resid = resid + position_embeddings
+        resid = self.model.encoder.layer_norm(resid)
     
         large_negative_number = -torch.inf
         mask = (
@@ -226,79 +206,86 @@ class HookedEncoder(HookedRootModule):
         additive_attention_mask = (
             torch.where(mask == 1, large_negative_number, 0) if mask is not None else None
         )
-    
         for block in self.blocks:
             resid = block(resid, additive_attention_mask)
     
         return resid
 
     def forward(
-        self,
-        input,  # either: Tensor[batch, samples] (raw wave) OR Tensor[batch, frames, feat_dim] (precomputed conv features)
-        return_type: Optional[str] = "logits",  # "logits" or None or "hidden"
-        lengths: Optional[torch.Tensor] = None,  # optional lengths in frames (for padding), shape [batch]
-        masked_positions: Optional[torch.BoolTensor] = None,  # optional mask of positions to replace with masked_spec_embed [batch, frames]
-        preprocess_already: bool = False,  # if True, input is precomputed frames
-    ):
-        """
-        HuBERT-like forward. If preprocess_already=False, expects raw audio waveforms (batch, samples)
-        and runs feature_extractor -> feature_projection. If preprocess_already=True, expects
-        (batch, frames, feat_dim) already projected to model hidden dim (or if feat_dim != hidden, we project).
-        """
-    
-        device = self.cfg.device
-    
-        # 1) Build feature frames
-        if preprocess_already:
-            # assume input is frames, possibly already in d_model
-            features = input.to(device)
-            # if feature dim != model hidden, optionally project (defensive)
-            if features.shape[-1] != self.cfg.d_model:
-                raise ValueError(f"features shape is incorrect. Model is expecting {self.cfg.d_model}, but get {features.shape[-1]}")
-        else:
-            # raw waveform path
-            # feature_extractor returns something like (batch, feat_len, feat_dim) or (batch, feat_len)
-            # Hugging Face: feature_extractor expects float waveform batched
-            wave = input.to(device)
-            features = self.feature_extractor(wave)               # conv layers -> torch.float
-            features = self.feature_projection(features)         # linear + layernorm -> (batch, frames, d_model)
-    
-        # 2) Optionally apply masked_spec_embed for masked_positions
-        # masked_positions: bool tensor [batch, frames] where True indicates masked frames
-        if masked_positions is not None:
-            # masked_spec_embed is shape (d_model,)
-            mask = masked_positions.to(device)
-            masked_vec = self.masked_spec_embed.view(1, 1, -1)  # (1,1,d_model)
-            features = torch.where(mask.unsqueeze(-1), masked_vec, features)
-    
-        # 3) Build attention mask from lengths if provided; else assume all ones
-        if lengths is not None:
-            # lengths in frames; create one_zero_attention_mask with 1 for valid / 0 for padding
-            max_frames = features.shape[1]
-            rng = torch.arange(max_frames, device=device).unsqueeze(0)  # (1, frames)
-            one_zero_attention_mask = (rng < lengths.unsqueeze(1)).long()  # (batch, frames)
-        else:
-            one_zero_attention_mask = torch.ones(features.shape[:2], dtype=torch.long, device=device)
-    
-        # 4) Pass through (possibly identical) encoder routine
-        # For the HookedTransformer code you had: resid = self.hook_full_embed(self.embed(tokens, ...))
-        # For HuBERT we treat 'features' as the residual input.
-        resid = self.encoder_output(features, one_zero_attention_mask)
-      
-        # 5) Prediction head: project hidden states to logits/predictions over discrete units
-        if return_type == "hidden":
-            return resid   # (batch, frames, d_model)
-    
-        # project_hid -> predictions (frame-wise)
-        pred = self.project_hid(resid)  # shape (batch, frames, target_dim) or (batch, frames, n_classes)
-        # If your project_hid produces vectors and you want logits over cluster ids, there may be an extra linear/unembed
-        # e.g., logits = self.unembed(pred) or pred itself already logits.
-    
-        if return_type == "logits" or return_type is None:
-            return pred
-    
-        return None
+    self,
+    input: Union[
+        torch.Tensor,                       # waveform (1D) OR precomputed frames (3D)
+        List[Union[torch.Tensor, np.ndarray]],  # list of waveforms
+        Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
+    ],
+    return_type: Optional[Literal["hidden", "logits"]] = "logits",
+    sampling_rate: int = 16000,
+    move_to_device: bool = True,
+) -> Optional[torch.Tensor]:
+    """
+    HuBERT-like forward (Transformer-Lens style).
 
+    Args:
+        input: one of:
+            - 1D torch.Tensor or numpy array (single waveform) OR list of 1D waveforms -> will call self.to_frames(...)
+            - 3D torch.Tensor shaped (batch, frames, d_model) -> treated as precomputed frames (skip to_frames)
+            - tuple (frames, frame_mask) -> use directly
+        return_type: "hidden" to return encoder hidden states (B, T, D), "logits" to return project_hid output if present.
+        sampling_rate: sampling rate for to_frames when converting raw audio.
+        move_to_device: move tensors to self.cfg.device (to match your other code).
+
+    Returns:
+        Depending on return_type:
+          - "hidden": (batch, frames, d_model) final encoder hidden states
+          - "logits": output of project_hid(resid) if available (e.g., (batch, frames, n_targets))
+    """
+    # ---------- 1) Normalize input: get (frames, frame_mask) ----------
+    frames = None
+    frame_mask = None  # one_zero_attention_mask: 1 = valid, 0 = padding
+
+    # If user passed (frames, mask) tuple
+    if isinstance(input, tuple) and len(input) == 2 and isinstance(input[0], torch.Tensor):
+        frames, frame_mask = input
+
+    # If user passed a 3D tensor -> assume (B, T, D) frames (pre-projected)
+    elif isinstance(input, torch.Tensor) and input.ndim == 3:
+        frames = input
+        # frame_mask stays whatever was passed as separate argument (None here)
+
+    # Else treat as raw waveform(s) -> call to_frames
+    else:
+        # allow single 1D tensor or numpy array or list of tensors/arrays
+        frames, frame_mask = self.to_frames(input, sampling_rate=sampling_rate, move_to_device=move_to_device)
+        # to_frames should already place tensors on device if move_to_device=True
+
+    # ---------- 2) Ensure device & dtype consistency ----------
+    device = self.cfg.device
+    if frames.device.type != device:
+        frames = frames.to(device)
+        if frame_mask is not None:
+            frame_mask = frame_mask.to(device)
+
+    # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
+    resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
+
+    # ---------- 4) Return according to return_type ----------
+    if return_type == "hidden":
+        return resid
+
+    if return_type == "logits":
+        if hasattr(self, "project_hid"):
+            logits = self.project_hid(resid)
+            return logits
+        # try model-level project head (HuggingFace uses project_hid/project_q)
+        if hasattr(self.model, "project_hid"):
+            logits = self.model.project_hid(resid)
+            return logits
+            
+        # no head available — return hidden states as fallback
+        return resid
+
+    # unknown return_type -> return hidden states
+    return resid
 
     @overload
     def run_with_cache(
@@ -415,41 +402,6 @@ class HookedEncoder(HookedRootModule):
         print(f"Loaded pretrained model {model_name} into HookedEncoder")
 
         return model
-
-    @property
-    def W_U(self) -> Float[torch.Tensor, "d_model d_vocab"]:
-        """
-        Convenience to get the unembedding matrix (ie the linear map from the final residual stream to the output logits)
-        """
-        return self.unembed.W_U
-
-    @property
-    def b_U(self) -> Float[torch.Tensor, "d_vocab"]:
-        """
-        Convenience to get the unembedding bias
-        """
-        return self.unembed.b_U
-
-    @property
-    def W_E(self) -> Float[torch.Tensor, "d_vocab d_model"]:
-        """
-        Convenience to get the embedding matrix
-        """
-        return self.embed.embed.W_E
-
-    @property
-    def W_pos(self) -> Float[torch.Tensor, "n_ctx d_model"]:
-        """
-        Convenience function to get the positional embedding. Only works on models with absolute positional embeddings!
-        """
-        return self.embed.pos_embed.W_pos
-
-    @property
-    def W_E_pos(self) -> Float[torch.Tensor, "d_vocab+n_ctx d_model"]:
-        """
-        Concatenated W_E and W_pos. Used as a full (overcomplete) basis of the input space, useful for full QK and full OV circuits.
-        """
-        return torch.cat([self.W_E, self.W_pos], dim=0)
 
     @property
     def W_K(self) -> Float[torch.Tensor, "n_layers n_heads d_model d_head"]:
