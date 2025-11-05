@@ -212,80 +212,60 @@ class HookedEncoder(HookedRootModule):
         return resid
 
     def forward(
-    self,
-    input: Union[
-        torch.Tensor,                       # waveform (1D) OR precomputed frames (3D)
-        List[Union[torch.Tensor, np.ndarray]],  # list of waveforms
-        Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
-    ],
-    return_type: Optional[Literal["hidden", "logits"]] = "logits",
-    sampling_rate: int = 16000,
-    move_to_device: bool = True,
-) -> Optional[torch.Tensor]:
-    """
-    HuBERT-like forward (Transformer-Lens style).
+        self,
+        input: Union[
+            torch.Tensor,                       # waveform (1D) OR precomputed frames (3D)
+            List[Union[torch.Tensor, np.ndarray]],  # list of waveforms
+            Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
+        ],
+        sampling_rate: int = 16000,
+        move_to_device: bool = True,
+    ) -> Optional[torch.Tensor]:
+        """
+        HuBERT-like forward (Transformer-Lens style).
+    
+        Args:
+            input: one of:
+                - 1D torch.Tensor or numpy array (single waveform) OR list of 1D waveforms -> will call self.to_frames(...)
+                - 3D torch.Tensor shaped (batch, frames, d_model) -> treated as precomputed frames (skip to_frames)
+                - tuple (frames, frame_mask) -> use directly
+            sampling_rate: sampling rate for to_frames when converting raw audio.
+            move_to_device: move tensors to self.cfg.device (to match your other code).
+    
+        Returns:
+            Depending on return_type:
+              - "hidden": (batch, frames, d_model) final encoder hidden states
+        """
+        # ---------- 1) Normalize input: get (frames, frame_mask) ----------
+        frames = None
+        frame_mask = None  # one_zero_attention_mask: 1 = valid, 0 = padding
+    
+        # If user passed (frames, mask) tuple
+        if isinstance(input, tuple) and len(input) == 2 and isinstance(input[0], torch.Tensor):
+            frames, frame_mask = input
+    
+        # If user passed a 3D tensor -> assume (B, T, D) frames (pre-projected)
+        elif isinstance(input, torch.Tensor) and input.ndim == 3:
+            frames = input
+            # frame_mask stays whatever was passed as separate argument (None here)
+    
+        # Else treat as raw waveform(s) -> call to_frames
+        else:
+            # allow single 1D tensor or numpy array or list of tensors/arrays
+            frames, frame_mask = self.to_frames(input, sampling_rate=sampling_rate, move_to_device=move_to_device)
+            # to_frames should already place tensors on device if move_to_device=True
+    
+        # ---------- 2) Ensure device & dtype consistency ----------
+        device = self.cfg.device
+        if frames.device.type != device:
+            frames = frames.to(device)
+            if frame_mask is not None:
+                frame_mask = frame_mask.to(device)
+    
+        # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
+        resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
 
-    Args:
-        input: one of:
-            - 1D torch.Tensor or numpy array (single waveform) OR list of 1D waveforms -> will call self.to_frames(...)
-            - 3D torch.Tensor shaped (batch, frames, d_model) -> treated as precomputed frames (skip to_frames)
-            - tuple (frames, frame_mask) -> use directly
-        return_type: "hidden" to return encoder hidden states (B, T, D), "logits" to return project_hid output if present.
-        sampling_rate: sampling rate for to_frames when converting raw audio.
-        move_to_device: move tensors to self.cfg.device (to match your other code).
-
-    Returns:
-        Depending on return_type:
-          - "hidden": (batch, frames, d_model) final encoder hidden states
-          - "logits": output of project_hid(resid) if available (e.g., (batch, frames, n_targets))
-    """
-    # ---------- 1) Normalize input: get (frames, frame_mask) ----------
-    frames = None
-    frame_mask = None  # one_zero_attention_mask: 1 = valid, 0 = padding
-
-    # If user passed (frames, mask) tuple
-    if isinstance(input, tuple) and len(input) == 2 and isinstance(input[0], torch.Tensor):
-        frames, frame_mask = input
-
-    # If user passed a 3D tensor -> assume (B, T, D) frames (pre-projected)
-    elif isinstance(input, torch.Tensor) and input.ndim == 3:
-        frames = input
-        # frame_mask stays whatever was passed as separate argument (None here)
-
-    # Else treat as raw waveform(s) -> call to_frames
-    else:
-        # allow single 1D tensor or numpy array or list of tensors/arrays
-        frames, frame_mask = self.to_frames(input, sampling_rate=sampling_rate, move_to_device=move_to_device)
-        # to_frames should already place tensors on device if move_to_device=True
-
-    # ---------- 2) Ensure device & dtype consistency ----------
-    device = self.cfg.device
-    if frames.device.type != device:
-        frames = frames.to(device)
-        if frame_mask is not None:
-            frame_mask = frame_mask.to(device)
-
-    # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
-    resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
-
-    # ---------- 4) Return according to return_type ----------
-    if return_type == "hidden":
         return resid
-
-    if return_type == "logits":
-        if hasattr(self, "project_hid"):
-            logits = self.project_hid(resid)
-            return logits
-        # try model-level project head (HuggingFace uses project_hid/project_q)
-        if hasattr(self.model, "project_hid"):
-            logits = self.model.project_hid(resid)
-            return logits
-            
-        # no head available — return hidden states as fallback
-        return resid
-
-    # unknown return_type -> return hidden states
-    return resid
 
     @overload
     def run_with_cache(
