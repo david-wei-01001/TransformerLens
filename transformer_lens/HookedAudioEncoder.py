@@ -9,13 +9,15 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, overload
+from typing_extensions import Literal
 
 import torch
 import torch.nn as nn
+import numpy as np
 from einops import repeat
 from jaxtyping import Float, Int
+from transformers import AutoProcessor, HubertModel
 from transformers.models.auto.tokenization_auto import AutoTokenizer
-from typing_extensions import Literal
 
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
@@ -53,6 +55,7 @@ class HookedEncoder(HookedRootModule):
         cfg: Union[HookedTransformerConfig, Dict],
         tokenizer: Optional[Any] = None,
         move_to_device: bool = True,
+        model_name: str = "facebook/hubert-base-ls960",
         **kwargs: Any,
     ):
         super().__init__()
@@ -85,10 +88,15 @@ class HookedEncoder(HookedRootModule):
 
         self.embed = BertEmbed(self.cfg)
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
-        self.mlm_head = BertMLMHead(self.cfg)
-        self.unembed = Unembed(self.cfg)
-        self.nsp_head = BertNSPHead(self.cfg)
-        self.pooler = BertPooler(self.cfg)
+        processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
+        model = HubertModel.from_pretrained(model_name)
+        if move_to_device:
+            if self.cfg.device is None:
+                raise ValueError("Cannot move to device when device is None")
+            model.to(self.cfg.device)
+        model.eval()
+        self.processor = processor
+        self.model = model
 
         self.hook_full_embed = HookPoint()
 
@@ -98,7 +106,103 @@ class HookedEncoder(HookedRootModule):
             self.to(self.cfg.device)
 
         self.setup()
+        
+    def _ensure_tensor(wave):
+        """Convert numpy array or python list to 1D torch.float tensor."""
+        if isinstance(wave, np.ndarray):
+            return torch.from_numpy(wave).float()
+        if isinstance(wave, list):
+            return torch.tensor(wave, dtype=torch.float)
+        if isinstance(wave, torch.Tensor):
+            return wave.float()
+        raise TypeError("wave must be torch.Tensor, np.ndarray or list of floats")
 
+    def to_frames(
+        raw_inputs: Union[torch.Tensor, List[torch.Tensor], List[np.ndarray]],
+        sampling_rate: int = 16000,
+        move_to_device: bool = True,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Convert raw audio batch -> (projected frames, frame_attention_mask)
+    
+        Args:
+            raw_inputs: one of:
+                - a 1D torch.Tensor or numpy array (single waveform)
+                - a list of 1D torch.Tensors / numpy arrays (batch)
+            self.processor: HF AutoProcessor (creates input_values + sample-level attention_mask)
+            self.model: pretrained HubertModel (provides feature_extractor and feature_projection)
+            sampling_rate: sample rate of the audio (default 16k)
+            move_to_device: move outputs to model.device
+    
+        Returns:
+            frames: torch.Tensor of shape (batch, frames, hidden_size)  <- after feature_projection
+            frame_attention_mask: torch.LongTensor of shape (batch, frames) with 1 for real frames, 0 for padding
+        """
+        # raw_inputs are arrays/tensors
+        if isinstance(raw_inputs, (torch.Tensor, np.ndarray)):
+            waves = [_ensure_tensor(raw_inputs)]
+        elif isinstance(raw_inputs, list):
+            waves = [_ensure_tensor(w) for w in raw_inputs]
+        else:
+            raise TypeError("Unsupported raw_inputs type")
+    
+        # Use HF processor to create input_values (padded) + sample-level attention_mask
+        # Processor will do padding so we can pass a variable-length batch
+        proc_out = self.processor(waves, sampling_rate=sampling_rate, return_tensors="pt", padding=True)
+    
+        input_values = proc_out["input_values"]               # (batch, samples), float
+        sample_attention_mask = proc_out.get("attention_mask")  # (batch, samples), 1 for valid, 0 for padding; may be None
+    
+        # move to device
+        device = self.cfg.device
+        if move_to_device:
+            input_values = input_values.to(device)
+            if sample_attention_mask is not None:
+                sample_attention_mask = sample_attention_mask.to(device)
+    
+        # 1) convolutional frontend -> (batch, conv_dim, conv_time)
+        with torch.no_grad():
+            conv_feats = self.model.feature_extractor(input_values)  # (B, C, T_conv)
+    
+        # 2) transpose to (batch, T_conv, C)
+        extract_features = conv_feats.transpose(1, 2)
+    
+        # 3) compute reduced frame-level attention mask (if sample mask provided)
+        frame_attention_mask = None
+        if sample_attention_mask is not None:
+            # model should provide helper _get_feature_vector_attention_mask
+            try:
+                frame_attention_mask = self.model._get_feature_vector_attention_mask(extract_features.shape[1], sample_attention_mask)
+            except AttributeError:
+                # fallback: compute output lengths and create mask similarly to HF implementation
+                # compute output lengths (downsampled lengths) from sample attention mask (sums per example)
+                input_lengths = sample_attention_mask.sum(dim=-1)  # (batch,)
+                # compute output lengths through conv layers using model._get_feat_extract_output_lengths if exists
+                if hasattr(model, "_get_feat_extract_output_lengths"):
+                    output_lengths = self.model._get_feat_extract_output_lengths(input_lengths).to(torch.long)
+                else:
+                    # fallback to naive downsample ratio: output_frames = extract_features.shape[1]
+                    output_lengths = torch.full((sample_attention_mask.shape[0],), extract_features.shape[1], device=device, dtype=torch.long)
+    
+                batch_size = sample_attention_mask.shape[0]
+                feat_len = extract_features.shape[1]
+                frame_attention_mask = torch.zeros((batch_size, feat_len), dtype=sample_attention_mask.dtype, device=device)
+                # mark the last valid index for each example and then cumsum trick to fill ones before it
+                idx = (torch.arange(batch_size, device=device), (output_lengths - 1).clamp(min=0))
+                frame_attention_mask[idx] = 1
+                frame_attention_mask = frame_attention_mask.flip([-1]).cumsum(-1).flip([-1]).bool().long()
+    
+        # 4) feature projection -> (batch, frames, hidden_size)
+        with torch.no_grad():
+            hidden_states = self.model.feature_projection(extract_features)  # typically returns (B, T, hidden)
+            # In HF's hubert, feature_projection is a module that returns a tensor (not tuple). If it returns tuple, adjust.
+    
+        # convert bool mask to long (1/0) if needed
+        if frame_attention_mask is not None:
+            frame_attention_mask = frame_attention_mask.to(dtype=torch.long)
+    
+        return hidden_states, frame_attention_mask
+        
     def encoder_output(
         self,
         frames: torch.Tensor,           # (batch, frames, d_model)   <-- precomputed conv features
