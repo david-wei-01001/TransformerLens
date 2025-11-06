@@ -4,18 +4,15 @@ import numpy as np
 import math
 import circuitsvis as cv
 
-# transformer-lens utils used in your LLaMA example:
-try:
-    from transformer_lens import utils
-except Exception:
-    # if you put utils somewhere else, import accordingly
-    from transformer_lens import utils
+from tqdm import tqdm
+from jaxtyping import Float
 
-# ---- Replace these imports with your implementations ----
-# from my_hubert_module import HookedAudioEncoder
-# from my_hubert_module import YourWrapperClass  # whichever class exposes run_with_cache/run_with_hooks and to_frames
-# ---------------------------------------------------------
-
+import transformer_lens
+import transformer_lens.utils as utils
+from transformer_lens.hook_points import (
+    HookPoint,
+)  # Hooking utilities
+from transformer_lens import HookedAudioEncoder
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
 DURATION_S = 1.0
@@ -27,10 +24,7 @@ def make_sine(sr=SAMPLE_RATE, duration=DURATION_S, freq=440.0, amp=0.1):
 
 # ---- Adapt these to your instantiated model/wrapper ----
 # instantiate your HookedAudioEncoder (example)
-# model = HookedAudioEncoder.from_pretrained("...").to(DEVICE)
-# or if you have a wrapper with to_frames(), instantiate wrapper
-# audio_wrapper = YourWrapperClass(...)
-# audio_wrapper.hubert_model etc.
+audio_model = HookedAudioEncoder.from_pretrained("facebook/hubert-base-ls960", device="cuda")
 
 # For this template I'll assume:
 #   - `audio_model` is the object that implements .to_frames(raw_inputs...) -> (frames, frame_mask)
