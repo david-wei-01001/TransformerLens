@@ -129,19 +129,9 @@ if __name__ == "__main__":
     # Instantiate your model
     # -----------------------
     # Example 1: from_pretrained API (if you implemented it)
-    try:
-        # If your class supports from_pretrained like HookedEncoder
-        from my_hubert_module import HookedAudioEncoder  # <-- CHANGE to your module path
-        try:
-            model = HookedAudioEncoder.from_pretrained("your/checkpoint/name").to(DEVICE)
-        except AttributeError:
-            # fallback to direct constructor
-            model = HookedAudioEncoder().to(DEVICE)
-    except ImportError:
-        raise SystemExit("Please change the import 'from my_hubert_module import HookedAudioEncoder' to your actual module path.")
-
+    model = HookedAudioEncoder.from_pretrained("your/checkpoint/name").to(DEVICE)
     # Run tests
     run_basic_sanity_tests(model, wav)
-
+    
     # Optionally compare to HF (network required)
-    # optional_compare_to_hf(model, wav, sr=SAMPLE_RATE)
+    optional_compare_to_hf(model, wav, sr=SAMPLE_RATE)
