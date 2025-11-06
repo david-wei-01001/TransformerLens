@@ -34,7 +34,7 @@ from transformer_lens.utilities import devices
 T = TypeVar("T", bound="HookedEncoder")
 
 
-class HookedEncoder(HookedRootModule):
+class HookedAudioEncoder(HookedRootModule):
     """
     This class implements a BERT-style encoder using the components in ./components.py, with HookPoints on every interesting activation. It inherits from HookedRootModule.
 
