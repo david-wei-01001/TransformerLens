@@ -73,8 +73,8 @@ class HookedEncoder(HookedRootModule):
         if move_to_device:
             if self.cfg.device is None:
                 raise ValueError("Cannot move to device when device is None")
-            hubert_.to(self.cfg.device)
-        hubert_.eval()
+            hubert_model.to(self.cfg.device)
+        hubert_model.eval()
         self.processor = processor
         if use_ctc:
             self.hubert_model = hubert_model.hubert
@@ -276,7 +276,8 @@ class HookedEncoder(HookedRootModule):
                 logging.warning("HubertForCTC not enabled")
                 return resid
             hidden_states = resid[0]  # (B, T, d_model)
-            resid = self.lm_head(hidden_states)  # (B, T, vocab_size)
+            with torch.no_grad():
+                resid = self.lm_head(hidden_states)  # (B, T, vocab_size)
 
         return resid
 
