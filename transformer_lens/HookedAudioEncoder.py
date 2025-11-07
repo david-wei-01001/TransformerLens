@@ -7,7 +7,6 @@ because it has a significantly different architecture to e.g. GPT style transfor
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, overload
 from typing_extensions import Literal
 
@@ -17,7 +16,6 @@ import numpy as np
 from einops import repeat
 from jaxtyping import Float, Int
 from transformers import AutoProcessor, HubertModel, HubertForCTC, AutoFeatureExtractor
-from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
