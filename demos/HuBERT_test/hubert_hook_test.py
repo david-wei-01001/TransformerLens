@@ -1,11 +1,13 @@
-# test_hubert_hooks.py
-import torch
-import numpy as np
 import math
+
+import numpy as np
+import torch
 # import circuitsvis as cv
 
-import transformer_lens.utils as utils
 from transformer_lens import HookedAudioEncoder
+import transformer_lens.utils as utils
+
+
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
 DURATION_S = 1.0
