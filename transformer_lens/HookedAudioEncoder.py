@@ -21,9 +21,9 @@ import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.components import {
-    Attention, 
-    BertBlock, 
-    MLP
+    MLP,
+    Attention,
+    BertBlock,
 }
 from transformer_lens.hook_points import HookedRootModule
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
