@@ -8,9 +8,11 @@ Usage:
 Change the import to point at your HookedAudioEncoder implementation.
 """
 
-import torch
-import numpy as np
 import math
+
+import numpy as np
+import torch
+
 from transformer_lens import HookedAudioEncoder
 
 # ----- CONFIG -----
