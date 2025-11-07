@@ -16,9 +16,9 @@ import torch
 from huggingface_hub import HfApi
 from transformers import (
     AutoConfig,
-    HubertModel,
     AutoModelForCausalLM,
     BertForPreTraining,
+    HubertModel,
     T5ForConditionalGeneration,
 )
 
