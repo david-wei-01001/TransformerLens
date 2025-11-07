@@ -2,7 +2,7 @@
 import torch
 import numpy as np
 import math
-import circuitsvis as cv
+# import circuitsvis as cv
 
 from tqdm import tqdm
 from jaxtyping import Float
