@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, overload
 
-import numpy as np
 import torch
+import numpy as np
 import torch.nn as nn
 from einops import repeat
 from jaxtyping import Float, Int
@@ -20,9 +20,13 @@ from typing_extensions import Literal
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.FactoredMatrix import FactoredMatrix
-from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
-from transformer_lens.components import Attention, BertBlock, MLP
+from transformer_lens.components import {
+    Attention, 
+    BertBlock, 
+    MLP
+}
 from transformer_lens.hook_points import HookedRootModule
+from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 from transformer_lens.utilities import devices
 
 T = TypeVar("T", bound="HookedEncoder")
