@@ -22,7 +22,7 @@ BATCH_SIZE = 1
 # If you want to attempt optional decoding with a HF tokenizer,
 # set TOKENIZER_NAME to a valid tokenizer (e.g. "facebook/wav2vec2-base-960h")
 # or set to None to skip tokenizer decoding.
-TOKENIZER_NAME = "facebook/hubert-base-ls960-ft"
+TOKENIZER_NAME = "facebook/hubert-large-ls960-ft"
 # ------------------
 
 def make_sine(frequency=440.0, sr=SAMPLE_RATE, duration=DURATION_S, amplitude=0.1):
@@ -55,7 +55,7 @@ def print_param_info(module, prefix=""):
             pass
 
 if __name__ == "__main__":
-    model = HookedAudioEncoder.from_pretrained("facebook/hubert-base-ls960-ft")
+    model = HookedAudioEncoder.from_pretrained("facebook/hubert-large-ls960-ft")
 
     model.to(DEVICE)
 

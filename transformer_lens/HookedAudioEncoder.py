@@ -87,6 +87,8 @@ class HookedAudioEncoder(HookedRootModule):
         if use_ctc:
             self.hubert_model = hubert_model.hubert
             self.lm_head = hubert_model.lm_head
+            for p in self.lm_head.parameters():
+                p.requires_grad = False
         else:
             self.hubert_model = hubert_model
             self.lm_head = None
@@ -237,7 +239,7 @@ class HookedAudioEncoder(HookedRootModule):
             Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
         ],
         sampling_rate: int = 16000,
-        use_proj: bool = False,
+        use_ctc: bool = False,
         move_to_device: bool = True,
     ) -> Optional[torch.Tensor]:
         """
@@ -285,13 +287,15 @@ class HookedAudioEncoder(HookedRootModule):
         # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
         resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
 
-        if use_proj:
+        if use_ctc:
             if self.lm_head is None:
                 logging.warning("HubertForCTC not enabled")
                 return resid
-            hidden_states = resid[0]  # (B, T, d_model)
-            with torch.no_grad():
-                resid = self.lm_head(hidden_states)  # (B, T, vocab_size)
+            if isinstance(resid, tuple):
+                hidden_states = resid[0]  # take last hidden state
+            else:
+                hidden_states = resid  # already tensor
+            resid = self.lm_head(hidden_states)  # (B, T, vocab_size)
 
         return resid
 
