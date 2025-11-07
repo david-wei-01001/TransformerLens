@@ -238,6 +238,7 @@ class HookedAudioEncoder(HookedRootModule):
             List[Union[torch.Tensor, np.ndarray]],  # list of waveforms
             Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
         ],
+        one_zero_attention_mask: Optional[Int[torch.Tensor, "batch pos"]] = None,
         sampling_rate: int = 16000,
         use_ctc: bool = False,
         move_to_device: bool = True,
@@ -276,7 +277,7 @@ class HookedAudioEncoder(HookedRootModule):
             # allow single 1D tensor or numpy array or list of tensors/arrays
             frames, frame_mask = self.to_frames(inputs)
             # to_frames should already place tensors on device if move_to_device=True
-    
+        frame_mask = frame_mask if one_zero_attention_mask is None else one_zero_attention_mask
         # ---------- 2) Ensure device & dtype consistency ----------
         device = self.cfg.device
         if frames.device.type != device:

@@ -52,7 +52,7 @@ def main():
 
     # --- Run with cache to inspect attention pattern ---
     # remove_batch_dim=True makes cached activations shaped like (pos, ...) for easier visualization (like LLaMA example)
-    cache = audio_model.run_with_cache(frames, attention_mask=frame_mask, remove_batch_dim=True)
+    logits, cache = audio_model.run_with_cache(frames, one_zero_attention_mask=frame_mask, remove_batch_dim=True)
 
     # Picking a layer and head for visualization
     layer_to_visualize = 0
@@ -76,7 +76,7 @@ def main():
 
     print("Layer", layer_to_visualize, "attention pattern shape:", tuple(attention_pattern.shape))
     print("Displaying attention patterns (layer", layer_to_visualize, ")")
-    display(cv.attention.attention_patterns(tokens=frame_tokens, attention=attention_pattern))
+    # display(cv.attention.attention_patterns(tokens=frame_tokens, attention=attention_pattern))
 
     # --- Define a head ablation hook (zero out a given head's v output) ---
     head_index_to_ablate = 0
@@ -113,13 +113,13 @@ def main():
         # hooks: list of (act_name, hook_fn) tuples for run_with_hooks
         if hooks is None:
             # run_with_cache to gather activations
-            cache = audio_model.run_with_cache(frames, attention_mask=frame_mask, remove_batch_dim=True)
-            out = audio_model.run_with_hooks(frames, return_type=None, fwd_hooks=[])
+            cache = audio_model.run_with_cache(frames, one_zero_attention_mask=frame_mask, remove_batch_dim=True)
+            out = audio_model.run_with_hooks(frames, fwd_hooks=[])
             # NOTE: if your API returns outputs directly from run_with_cache, adapt as needed.
         else:
             # run with hooks and also capture cache
             # run_with_hooks typically returns output (or logits) and optionally a cache depending on your implementation
-            out = audio_model.run_with_hooks(frames, fwd_hooks=hooks, attention_mask=frame_mask, return_type="both")
+            out = audio_model.run_with_hooks(frames, fwd_hooks=hooks, one_zero_attention_mask=frame_mask)
             # If return_type="both" isn't supported, you can run run_with_cache and run_with_hooks separately.
         # Try to extract CTC logits from `out` first
         logits = None
@@ -148,7 +148,7 @@ def main():
             last_layer = audio_model.cfg.n_layers - 1
             resid_name = utils.get_act_name("resid_post", last_layer)
             # get cache from run_with_cache (we ran above)
-            cache = audio_model.run_with_cache(frames, attention_mask=frame_mask, remove_batch_dim=True)
+            cache = audio_model.run_with_cache(frames, one_zero_attention_mask=frame_mask, remove_batch_dim=True)
             resid = cache[resid_name]  # e.g. (pos, d) or (batch,pos,d)
             # mean-pool across pos dimension
             if resid.ndim == 3:
