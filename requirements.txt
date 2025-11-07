@@ -1,0 +1,11 @@
+rich
+torch
+transformers
+datasets
+jaxtyping
+datasets
+einops
+better_abc
+typeguard
+wandb
+circuitsvis
