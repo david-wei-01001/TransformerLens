@@ -129,7 +129,7 @@ if __name__ == "__main__":
     # Instantiate your model
     # -----------------------
     # Example 1: from_pretrained API (if you implemented it)
-    model = HookedAudioEncoder.from_pretrained("your/checkpoint/name").to(DEVICE)
+    model = HookedAudioEncoder.from_pretrained("facebook/hubert-base-ls960").to(DEVICE)
     # Run tests
     run_basic_sanity_tests(model, wav)
     

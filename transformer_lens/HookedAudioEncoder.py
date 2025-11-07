@@ -16,7 +16,7 @@ import torch.nn as nn
 import numpy as np
 from einops import repeat
 from jaxtyping import Float, Int
-from transformers import AutoProcessor, HubertModel, HubertForCTC
+from transformers import AutoProcessor, HubertModel, HubertForCTC, AutoFeatureExtractor
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
 import transformer_lens.loading_from_pretrained as loading
@@ -65,7 +65,15 @@ class HookedAudioEncoder(HookedRootModule):
         assert self.cfg.n_devices == 1, "Multiple devices not supported for HookedEncoder"
 
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
-        processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
+        if model_name.endswith("-ft") and use_ctc:
+            # fine-tuned model (has CTC head)
+            use_ctc = True
+            processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
+        else:
+            # pretraining-only model (no CTC)
+            use_ctc = False
+            processor = AutoFeatureExtractor.from_pretrained(model_name)
+
         if use_ctc:
             hubert_model = HubertForCTC.from_pretrained(model_name)
         else:
@@ -90,7 +98,7 @@ class HookedAudioEncoder(HookedRootModule):
 
         self.setup()
         
-    def _ensure_tensor(wave):
+    def _ensure_tensor(self, wave):
         """Convert numpy array or python list to 1D torch.float tensor."""
         if isinstance(wave, np.ndarray):
             return torch.from_numpy(wave).float()
@@ -101,6 +109,7 @@ class HookedAudioEncoder(HookedRootModule):
         raise TypeError("wave must be torch.Tensor, np.ndarray or list of floats")
 
     def to_frames(
+        self,
         raw_inputs: Union[torch.Tensor, List[torch.Tensor], List[np.ndarray]],
         sampling_rate: int = 16000,
         move_to_device: bool = True,
@@ -122,17 +131,18 @@ class HookedAudioEncoder(HookedRootModule):
             frame_attention_mask: torch.LongTensor of shape (batch, frames) with 1 for real frames, 0 for padding
         """
         # raw_inputs are arrays/tensors
+        # print(type(raw_inputs))
         if isinstance(raw_inputs, (torch.Tensor, np.ndarray)):
-            waves = [_ensure_tensor(raw_inputs)]
+            waves = [self._ensure_tensor(raw_inputs)]
         elif isinstance(raw_inputs, list):
-            waves = [_ensure_tensor(w) for w in raw_inputs]
+            waves = [self._ensure_tensor(w) for w in raw_inputs]
         else:
             raise TypeError("Unsupported raw_inputs type")
     
         # Use HF processor to create input_values (padded) + sample-level attention_mask
         # Processor will do padding so we can pass a variable-length batch
+        waves = [w.detach().cpu() for w in waves]
         proc_out = self.processor(waves, sampling_rate=sampling_rate, return_tensors="pt", padding=True)
-    
         input_values = proc_out["input_values"]               # (batch, samples), float
         sample_attention_mask = proc_out.get("attention_mask")  # (batch, samples), 1 for valid, 0 for padding; may be None
     
@@ -144,6 +154,10 @@ class HookedAudioEncoder(HookedRootModule):
                 sample_attention_mask = sample_attention_mask.to(device)
     
         # 1) convolutional frontend -> (batch, conv_dim, conv_time)
+        if input_values.ndim > 2:
+            input_values = input_values.squeeze()
+            if input_values.ndim == 1:
+                input_values = input_values.unsqueeze(0)  # (1, T)
         with torch.no_grad():
             conv_feats = self.hubert_model.feature_extractor(input_values)  # (B, C, T_conv)
     
@@ -198,7 +212,7 @@ class HookedAudioEncoder(HookedRootModule):
                 one_zero_attention_mask = one_zero_attention_mask.to(self.cfg.device)
     
         position_embeddings = self.hubert_model.encoder.pos_conv_embed(frames)
-        resid = resid + position_embeddings
+        resid = frames + position_embeddings
         resid = self.hubert_model.encoder.layer_norm(resid)
     
         large_negative_number = -torch.inf
@@ -217,7 +231,7 @@ class HookedAudioEncoder(HookedRootModule):
 
     def forward(
         self,
-        input: Union[
+        inputs: Union[
             torch.Tensor,                       # waveform (1D) OR precomputed frames (3D)
             List[Union[torch.Tensor, np.ndarray]],  # list of waveforms
             Tuple[torch.Tensor, torch.Tensor],  # (frames, frame_mask)
@@ -245,20 +259,20 @@ class HookedAudioEncoder(HookedRootModule):
         # ---------- 1) Normalize input: get (frames, frame_mask) ----------
         frames = None
         frame_mask = None  # one_zero_attention_mask: 1 = valid, 0 = padding
-    
+        # print(type(inputs))
         # If user passed (frames, mask) tuple
-        if isinstance(input, tuple) and len(input) == 2 and isinstance(input[0], torch.Tensor):
-            frames, frame_mask = input
+        if isinstance(inputs, tuple) and len(inputs) == 2 and isinstance(inputs[0], torch.Tensor):
+            frames, frame_mask = inputs
     
         # If user passed a 3D tensor -> assume (B, T, D) frames (pre-projected)
-        elif isinstance(input, torch.Tensor) and input.ndim == 3:
-            frames = input
+        elif isinstance(inputs, torch.Tensor) and inputs.ndim == 3:
+            frames = inputs
             # frame_mask stays whatever was passed as separate argument (None here)
     
         # Else treat as raw waveform(s) -> call to_frames
         else:
             # allow single 1D tensor or numpy array or list of tensors/arrays
-            frames, frame_mask = self.to_frames(input, sampling_rate=sampling_rate, move_to_device=move_to_device)
+            frames, frame_mask = self.to_frames(inputs)
             # to_frames should already place tensors on device if move_to_device=True
     
         # ---------- 2) Ensure device & dtype consistency ----------
@@ -370,6 +384,13 @@ class HookedAudioEncoder(HookedRootModule):
             dtype = from_pretrained_kwargs["torch_dtype"]
 
         official_model_name = loading.get_official_model_name(model_name)
+        
+        if model_name.endswith("-ft") and use_ctc:
+            # fine-tuned model (has CTC head)
+            use_ctc = True
+        else:
+            # pretraining-only model (no CTC)
+            use_ctc = False
 
         cfg = loading.get_pretrained_model_config(
             official_model_name,
