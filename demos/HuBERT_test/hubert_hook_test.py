@@ -1,11 +1,10 @@
 import math
 
-import numpy as np
 import torch
-# import circuitsvis as cv
+import numpy as np
 
-from transformer_lens import HookedAudioEncoder
 import transformer_lens.utils as utils
+from transformer_lens import HookedAudioEncoder
 
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
@@ -16,15 +15,7 @@ def make_sine(sr=SAMPLE_RATE, duration=DURATION_S, freq=440.0, amp=0.1):
     t = np.linspace(0, duration, int(sr*duration), endpoint=False, dtype=np.float32)
     return amp * np.sin(2 * math.pi * freq * t)
 
-# ---- Adapt these to your instantiated model/wrapper ----
-# instantiate your HookedAudioEncoder (example)
 audio_model = HookedAudioEncoder.from_pretrained("facebook/hubert-base-ls960", device="cuda")
-
-# For this template I'll assume:
-#   - `audio_model` is the object that implements .to_frames(raw_inputs...) -> (frames, frame_mask)
-#   - `audio_model` exposes: run_with_cache(frames, attention_mask=frame_mask, remove_batch_dim=True)
-#   - `audio_model` exposes: run_with_hooks(frames, fwd_hooks=[(act_name, hook_fn)], attention_mask=frame_mask, return_type=...)
-# If your API names differ, substitute accordingly.
 
 def main():
     # --- Build a 1s test waveform ---
