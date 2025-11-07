@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, overload
 
+from einops import repeat
+from jaxtyping import Float, Int
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import repeat
-from jaxtyping import Float, Int
 from transformers import (
     AutoFeatureExtractor,
     AutoProcessor,
@@ -25,9 +25,9 @@ from typing_extensions import Literal
 from transformer_lens import loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.components import (
-    MLP,
     Attention,
     BertBlock,
+    MLP,
 )
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule
