@@ -4,7 +4,6 @@ from __future__ import annotations
 
 This module contains functions for loading pretrained models from the Hugging Face Hub.
 """
-
 import dataclasses
 import logging
 import os
@@ -18,8 +17,8 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     BertForPreTraining,
-    T5ForConditionalGeneration,
     HubertModel,
+    T5ForConditionalGeneration,
 )
 
 import transformer_lens.utils as utils
