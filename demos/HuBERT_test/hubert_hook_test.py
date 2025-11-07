@@ -3,8 +3,8 @@ import math
 import torch
 import numpy as np
 
-import transformer_lens.utils as utils
 from transformer_lens import HookedAudioEncoder
+import transformer_lens.utils as utils
 
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
