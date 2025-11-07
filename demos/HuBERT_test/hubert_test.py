@@ -1,15 +1,10 @@
 # test_hubert_hooked.py
-import torch
-import numpy as np
 import math
 
-# Replace this with the actual import for your implementation:
+import numpy as np
+import torch
+
 from transformer_lens import HookedAudioEncoder
-# For illustration I assume the same API as HookedEncoder/HookedAudioEncoder:
-# - HookedAudioEncoder.from_pretrained(...)  OR HookedAudioEncoder(...) to instantiate
-# - model(waveform, return_type=...) or model(waveform) returns a tensor
-#
-# If your class is named differently, change the import and instantiation below.
 
 # ---------- CONFIG ----------
 SAMPLE_RATE = 16000
