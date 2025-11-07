@@ -26,7 +26,7 @@ from transformer_lens import loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.components import (
     MLP,
-    Attention，
+    Attention,
     BertBlock,
 )
 from transformer_lens.FactoredMatrix import FactoredMatrix
