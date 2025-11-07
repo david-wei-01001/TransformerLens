@@ -7,7 +7,6 @@ import torch
 from transformer_lens import HookedAudioEncoder
 import transformer_lens.utils as utils
 
-
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
 DURATION_S = 1.0
