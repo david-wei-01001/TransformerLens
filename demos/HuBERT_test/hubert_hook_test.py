@@ -4,14 +4,7 @@ import numpy as np
 import math
 # import circuitsvis as cv
 
-from tqdm import tqdm
-from jaxtyping import Float
-
-import transformer_lens
 import transformer_lens.utils as utils
-from transformer_lens.hook_points import (
-    HookPoint,
-)  # Hooking utilities
 from transformer_lens import HookedAudioEncoder
 # ---- Simple sine audio generator ----
 SAMPLE_RATE = 16000
