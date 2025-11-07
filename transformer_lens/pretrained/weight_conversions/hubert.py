@@ -2,6 +2,7 @@ import einops
 
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 
+
 def convert_hubert_weights(hf_model, cfg: HookedTransformerConfig):
     """
     Convert transformer encoder weights from a HuggingFace HuBERT model
