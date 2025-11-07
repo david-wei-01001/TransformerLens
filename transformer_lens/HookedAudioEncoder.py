@@ -6,11 +6,9 @@ because it has a significantly different architecture to e.g. GPT style transfor
 
 from __future__ import annotations
 
-# Standard library
 import logging
 from typing import Any, Dict, List, Optional, Tuple, TypeVar, Union, overload
 
-# Third-party
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,7 +17,6 @@ from jaxtyping import Float, Int
 from transformers import AutoFeatureExtractor, AutoProcessor, HubertForCTC, HubertModel
 from typing_extensions import Literal
 
-# Local imports
 import transformer_lens.loading_from_pretrained as loading
 from transformer_lens.ActivationCache import ActivationCache
 from transformer_lens.FactoredMatrix import FactoredMatrix
