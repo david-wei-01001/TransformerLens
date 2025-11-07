@@ -31,6 +31,7 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_gemma_weights,
     convert_gpt2_weights,
     convert_gptj_weights,
+    convert_hubert_weights,
     convert_llama_weights,
     convert_mingpt_weights,
     convert_mistral_weights,
@@ -45,7 +46,6 @@ from transformer_lens.pretrained.weight_conversions import (
     convert_qwen3_weights,
     convert_qwen_weights,
     convert_t5_weights,
-    convert_hubert_weights,
 )
 
 OFFICIAL_MODEL_NAMES = [
