@@ -54,7 +54,7 @@ class HookedAudioEncoder(HookedRootModule):
         cfg: Union[HookedTransformerConfig, Dict],
         move_to_device: bool = True,
         model_name: str = "facebook/hubert-base-ls960",
-        use_ctc: bool = True,
+        use_ctc: bool = False,
         **kwargs: Any,
     ):
         super().__init__()
@@ -369,7 +369,7 @@ class HookedAudioEncoder(HookedRootModule):
         device: Optional[str] = None,
         move_to_device: bool = True,
         dtype: torch.dtype = torch.float32,
-        use_ctc: bool = True,
+        use_ctc: bool = False,
         **from_pretrained_kwargs: Any,
     ) -> HookedEncoder:
         """Loads in the pretrained weights from huggingface. Currently supports loading weight from HuggingFace BertForMaskedLM. Unlike HookedTransformer, this does not yet do any preprocessing on the model."""
