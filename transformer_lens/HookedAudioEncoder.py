@@ -28,6 +28,7 @@ from transformer_lens.components import (
     Attention,
     BertBlock,
     MLP,
+    LayerNorm,
 )
 from transformer_lens.FactoredMatrix import FactoredMatrix
 from transformer_lens.hook_points import HookedRootModule
@@ -96,6 +97,8 @@ class HookedAudioEncoder(HookedRootModule):
         else:
             self.hubert_model = hubert_model
             self.lm_head = None
+
+        self.ln_final = LayerNorm(self.cfg)
 
         if move_to_device:
             if self.cfg.device is None:
@@ -291,6 +294,7 @@ class HookedAudioEncoder(HookedRootModule):
     
         # ---------- 3) Run encoder (respects pos_conv_embed / layer_norm / dropout inside encoder_output) ----------
         resid = self.encoder_output(frames, frame_mask)  # (B, T, d_model)
+        resid = self.ln_final(resid)
 
         if use_ctc:
             if self.lm_head is None:
