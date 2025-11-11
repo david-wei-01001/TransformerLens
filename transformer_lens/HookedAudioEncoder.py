@@ -73,15 +73,28 @@ class HookedAudioEncoder(HookedRootModule):
             # fine-tuned model (has CTC head)
             use_ctc = True
             processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
+            logging.warning(
+                f"Using AutoProcessor. The model name is {model_name}"
+            )
+
         else:
             # pretraining-only model (no CTC)
             use_ctc = False
             processor = AutoFeatureExtractor.from_pretrained(model_name)
+            logging.warning(
+                f"Using AutoFeatureExtractor. The model name is {model_name}"
+            )
 
-        if use_ctc:
+        if model_name.endswith("-ft") and use_ctc:
             hubert_model = HubertForCTC.from_pretrained(model_name)
+            logging.warning(
+                f"Using HubertForCTC"
+            )
         else:
             hubert_model = HubertModel.from_pretrained(model_name)
+            logging.warning(
+                f"Using HubertModel"
+            )
         if move_to_device:
             if self.cfg.device is None:
                 raise ValueError("Cannot move to device when device is None")
