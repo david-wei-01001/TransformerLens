@@ -69,36 +69,26 @@ class HookedAudioEncoder(HookedRootModule):
         assert self.cfg.n_devices == 1, "Multiple devices not supported for HookedEncoder"
 
         self.blocks = nn.ModuleList([BertBlock(self.cfg) for _ in range(self.cfg.n_layers)])
+        
         if model_name.endswith("-ft") and use_ctc:
             # fine-tuned model (has CTC head)
             use_ctc = True
             processor = AutoProcessor.from_pretrained(model_name)  # builds input_values + attention_mask
-            logging.warning(
-                f"Using AutoProcessor. The model name is {model_name}"
-            )
-
         else:
             # pretraining-only model (no CTC)
             use_ctc = False
             processor = AutoFeatureExtractor.from_pretrained(model_name)
-            logging.warning(
-                f"Using AutoFeatureExtractor. The model name is {model_name}"
-            )
 
         if model_name.endswith("-ft") and use_ctc:
             hubert_model = HubertForCTC.from_pretrained(model_name)
-            logging.warning(
-                f"Using HubertForCTC"
-            )
         else:
             hubert_model = HubertModel.from_pretrained(model_name)
-            logging.warning(
-                f"Using HubertModel"
-            )
+
         if move_to_device:
             if self.cfg.device is None:
                 raise ValueError("Cannot move to device when device is None")
             hubert_model.to(self.cfg.device)
+            
         hubert_model.eval()
         self.processor = processor
         if use_ctc:
@@ -117,15 +107,29 @@ class HookedAudioEncoder(HookedRootModule):
 
         self.setup()
         
-    def _ensure_tensor(self, wave):
-        """Convert numpy array or python list to 1D torch.float tensor."""
-        if isinstance(wave, np.ndarray):
-            return torch.from_numpy(wave).float()
-        if isinstance(wave, list):
-            return torch.tensor(wave, dtype=torch.float)
+    def _ensure_numpy(self, wave):
+        """
+        Convert torch.Tensor / np.ndarray / list -> 1D np.float32 array on CPU.
+        """
         if isinstance(wave, torch.Tensor):
-            return wave.float()
-        raise TypeError("wave must be torch.Tensor, np.ndarray or list of floats")
+            arr = wave.detach().cpu().numpy()
+        elif isinstance(wave, np.ndarray):
+            arr = wave
+        elif isinstance(wave, list):
+            arr = np.asarray(wave)
+        else:
+            raise TypeError("wave must be torch.Tensor, np.ndarray or list of floats")
+
+        # force 1-D (if stereo or shape (N,1) etc)
+        if arr.ndim > 1:
+            # if shape (n_samples, n_channels) average channels -> mono
+            if arr.shape[1] <= arr.shape[0]:
+                arr = arr.mean(axis=1)
+            else:
+                arr = arr.reshape(-1)
+    
+        return arr.astype(np.float32, copy=False)
+
 
     def to_frames(
         self,
@@ -149,12 +153,11 @@ class HookedAudioEncoder(HookedRootModule):
             frames: torch.Tensor of shape (batch, frames, hidden_size)  <- after feature_projection
             frame_attention_mask: torch.LongTensor of shape (batch, frames) with 1 for real frames, 0 for padding
         """
-        # raw_inputs are arrays/tensors
-        # print(type(raw_inputs))
+        # AutoFeatureExtractor works better onnumpy array where it pads automatically. If passing in tensors, it does not pad properly, giving inhomogeneous arts error
         if isinstance(raw_inputs, (torch.Tensor, np.ndarray)):
-            waves = [self._ensure_tensor(raw_inputs)]
+            waves = [self._ensure_numpy(raw_inputs)]
         elif isinstance(raw_inputs, list):
-            waves = [self._ensure_tensor(w) for w in raw_inputs]
+            waves = [self._ensure_numpy(w) for w in raw_inputs]
         else:
             raise TypeError("Unsupported raw_inputs type")
     
