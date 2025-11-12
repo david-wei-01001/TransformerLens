@@ -163,7 +163,7 @@ class HookedAudioEncoder(HookedRootModule):
     
         # Use HF processor to create input_values (padded) + sample-level attention_mask
         # Processor will do padding so we can pass a variable-length batch
-        proc_out = self.processor(waves, sampling_rate=sampling_rate, return_tensors="pt", padding=True)
+        proc_out = self.processor(waves, sampling_rate=sampling_rate, return_tensors="pt", padding=True, return_attention_mask=True)
         input_values = proc_out["input_values"]               # (batch, samples), float
         sample_attention_mask = proc_out.get("attention_mask")  # (batch, samples), 1 for valid, 0 for padding; may be None
     
