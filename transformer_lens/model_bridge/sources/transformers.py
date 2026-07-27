@@ -283,6 +283,8 @@ def get_hf_model_class_for_architecture(architecture: str):
         MASKED_LM_ARCHITECTURES,
         MULTIMODAL_ARCHITECTURES,
         SEQ2SEQ_ARCHITECTURES,
+        VISION_ARCHITECTURES,
+        VISION_CLASSIFICATION_ARCHITECTURES,
     )
 
     if architecture in SEQ2SEQ_ARCHITECTURES:
@@ -300,6 +302,12 @@ def get_hf_model_class_for_architecture(architecture: str):
             return AutoModelForCTC
         from transformers import AutoModel
 
+        return AutoModel
+    elif architecture in VISION_ARCHITECTURES:
+        if architecture in VISION_CLASSIFICATION_ARCHITECTURES:
+            from transformers import AutoModelForImageClassification
+            return AutoModelForImageClassification
+        from transformers import AutoModel
         return AutoModel
     else:
         return AutoModelForCausalLM
